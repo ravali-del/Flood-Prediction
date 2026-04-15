@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pralay Kavach | Evacuation Protocol</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #f8fafc; overflow: hidden; height: 100vh; }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); border: 1px solid white; }
+        #map { height: 100%; border-radius: 2.5rem; transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+        .danger-overlay { filter: sepia(0.4) hue-rotate(-50deg) saturate(1.8); }
+        .needle { transform-origin: bottom center; transition: transform 1.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .leaflet-routing-container { display: none !important; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        /* Custom Tooltip Styling */
+        .leaflet-tooltip { 
+            background: white; 
+            border: 1px solid #e2e8f0; 
+            border-radius: 8px; 
+            padding: 4px 8px; 
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); 
+            font-weight: 800;
+            font-size: 10px;
+            color: #1e293b;
+        }
+    </style>
+</head>
+<body class="flex flex-col p-4 gap-4">
+
+    <nav class="glass rounded-3xl px-8 h-16 flex justify-between items-center shadow-sm shrink-0">
+        <h1 class="font-extrabold text-xl tracking-tighter uppercase text-slate-900 leading-none">🛡️ PRALAY <span class="text-blue-600">KAVACH</span></h1>
+        <div id="satInfo" class="text-[10px] font-bold text-slate-400 bg-white px-5 py-2 rounded-full border flex items-center gap-3">
+            <span id="liveClock" class="font-mono">00:00:00</span>
+            <span id="satStatusText">SYSTEM: STANDBY</span>
+        </div>
+    </nav>
+
+    <div class="flex flex-1 gap-4 overflow-hidden">
+        
+        <aside class="w-80 flex flex-col gap-4">
+            <div class="glass p-6 rounded-[2rem] space-y-4 shadow-sm">
+                <button onclick="connectSatellite()" class="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-xs hover:bg-slate-900 transition-all shadow-lg shadow-blue-100">🛰️ SYNC SATELLITE GPS</button>
+                <div class="flex gap-2">
+                    <input id="areaInput" type="text" placeholder="Locality Name..." class="flex-1 px-4 py-2 rounded-xl border outline-none text-xs focus:ring-2 ring-blue-100">
+                    <button onclick="searchArea()" class="bg-slate-800 text-white p-2 rounded-xl">🔍</button>
+                </div>
+                
+                <div class="pt-2 border-t border-slate-100">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Simulation Mode</label>
+                        <input type="checkbox" id="simToggle" onchange="runSim()" class="w-4 h-4 accent-blue-600">
+                    </div>
+                    <input type="range" id="simRain" min="0" max="100" value="0" class="w-full h-1 bg-blue-100 rounded-lg appearance-none cursor-pointer" oninput="updateRainLabel(this.value)">
+                    <p class="text-[9px] font-bold text-blue-600 mt-1 uppercase">Simulated: <span id="simVal">0</span>MM Rain</p>
+                </div>
+            </div>
+
+            <div class="glass p-5 rounded-[2.5rem] grid grid-cols-2 gap-2 text-[10px] font-black uppercase text-center shadow-sm">
+                <div class="bg-blue-50 p-3 rounded-xl">🌧️ Rain<br><span id="tRain" class="text-blue-600 text-lg">--</span></div>
+                <div class="bg-orange-50 p-3 rounded-xl">🌡️ Temp<br><span id="tTemp" class="text-orange-600 text-lg">--</span></div>
+                <div class="bg-emerald-50 p-3 rounded-xl">⛰️ Elev<br><span id="tElev" class="text-emerald-600 text-lg">--</span></div>
+                <div class="bg-purple-50 p-3 rounded-xl">💧 Hum<br><span id="tHum" class="text-purple-600 text-lg">--</span></div>
+            </div>
+        </aside>
+
+        <main class="flex-1 relative glass p-2 rounded-[3.5rem] overflow-hidden">
+            <div id="map"></div>
+            
+            <div id="routeBadge" class="absolute top-8 left-1/2 -translate-x-1/2 glass px-6 py-2 rounded-full z-[1000] shadow-2xl hidden border-red-100 border-2">
+                <p class="text-[10px] font-bold text-slate-700 uppercase">EVACUATING TO: <span id="targetName" class="text-blue-600">--</span></p>
+            </div>
+
+            <div class="absolute bottom-8 left-8 w-44 glass p-6 rounded-[2.5rem] shadow-2xl z-[1000] text-center">
+                <div class="relative h-16 overflow-hidden flex justify-center">
+                    <div class="w-32 h-32 rounded-full border-[10px] border-slate-100"></div>
+                    <div id="needle" class="absolute bottom-0 w-1 h-14 bg-slate-900 needle" style="transform: rotate(-90deg)"></div>
+                </div>
+                <h2 id="riskVal" class="text-3xl font-black text-slate-900 mt-2">0%</h2>
+                <p id="riskStatus" class="text-[9px] font-bold uppercase text-slate-400">Risk Assessment</p>
+            </div>
+        </main>
+
+        <aside class="w-80 flex flex-col gap-4">
+            <div class="glass p-5 rounded-[2.5rem] flex-1 flex flex-col overflow-hidden shadow-sm">
+                <h3 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 ml-1">Active Safe Havens</h3>
+                <div id="targetList" class="space-y-3 overflow-y-auto pr-2 flex-1 custom-scrollbar"></div>
+            </div>
+        </aside>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    <script>
+        let currentUserLoc = null, routeControl = null, markerGroup = L.layerGroup();
+        
+        setInterval(() => { document.getElementById('liveClock').innerText = new Date().toLocaleTimeString('en-GB'); }, 1000);
+
+        const map = L.map('map', {zoomControl: false}).setView([20.59, 78.96], 5);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+        markerGroup.addTo(map);
+
+        function updateRainLabel(v) { document.getElementById('simVal').innerText = v; if(document.getElementById('simToggle').checked) runSim(); }
+
+        function runSim() {
+            if(currentUserLoc) callAPI({lat: currentUserLoc.lat, lon: currentUserLoc.lng, simulation: document.getElementById('simToggle').checked, sim_rain: parseFloat(document.getElementById('simRain').value)}, '/predict-flood-gps');
+        }
+
+        function connectSatellite() {
+            navigator.geolocation.getCurrentPosition(pos => {
+                document.getElementById('satStatusText').innerText = 'GPS: ACTIVE';
+                currentUserLoc = L.latLng(pos.coords.latitude, pos.coords.longitude);
+                runSim();
+            });
+        }
+
+        async function searchArea() {
+            const q = document.getElementById('areaInput').value;
+            if(q) callAPI({query: q, simulation: document.getElementById('simToggle').checked, sim_rain: parseFloat(document.getElementById('simRain').value)}, '/predict-flood');
+        }
+
+        async function callAPI(p, e) {
+            try {
+                const res = await fetch(`http://127.0.0.1:8000${e}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(p)});
+                const data = await res.json();
+                updateUI(data);
+            } catch (e) { alert("Engine Offline"); }
+        }
+
+        function calculateNewRoute(destLat, destLon, destName) {
+            if (routeControl) map.removeControl(routeControl);
+            document.getElementById('routeBadge').classList.remove('hidden');
+            document.getElementById('targetName').innerText = destName;
+            routeControl = L.Routing.control({
+                waypoints: [currentUserLoc, L.latLng(destLat, destLon)],
+                lineOptions: { styles: [{color: '#2563eb', weight: 6, opacity: 0.8}] },
+                createMarker: () => null,
+                addWaypoints: false, draggableWaypoints: false, fitSelectedRoutes: true
+            }).addTo(map);
+        }
+
+        function updateUI(data) {
+            if(data.error) return alert(data.error);
+
+            document.getElementById('riskVal').innerText = data.risk + "%";
+            document.getElementById('riskStatus').innerText = data.status;
+            document.getElementById('tRain').innerText = data.telemetry.rain + " MM";
+            document.getElementById('tTemp').innerText = data.telemetry.temp + " °C";
+            document.getElementById('tElev').innerText = data.telemetry.elev + " M";
+            document.getElementById('tHum').innerText = data.telemetry.hum + " %";
+            document.getElementById('needle').style.transform = `rotate(${(data.risk * 1.8) - 90}deg)`;
+
+            const mapContainer = document.getElementById('map');
+            if(data.risk > 35) mapContainer.classList.add('danger-overlay');
+            else mapContainer.classList.remove('danger-overlay');
+
+            markerGroup.clearLayers();
+            currentUserLoc = L.latLng(data.lat, data.lon);
+
+            // Source Marker with Permanent Label
+            L.circleMarker(currentUserLoc, {radius: 8, color: '#2563eb', fillOpacity: 1, fillColor: '#2563eb'})
+                .addTo(markerGroup)
+                .bindTooltip("SOURCE", { permanent: true, direction: 'top', className: 'source-label' });
+
+            const list = document.getElementById('targetList');
+            list.innerHTML = "";
+
+            if(data.safe_zones && data.safe_zones.length > 0) {
+                calculateNewRoute(data.safe_zones[0].lat, data.safe_zones[0].lon, data.safe_zones[0].name);
+                data.safe_zones.forEach((z, i) => {
+                    // Destination Marker with Permanent Label
+                    const sm = L.circleMarker([z.lat, z.lon], {radius: 6, color: '#16a34a', fillOpacity: 1, fillColor: '#16a34a'})
+                        .addTo(markerGroup)
+                        .bindTooltip(z.name, { permanent: true, direction: 'bottom', className: 'dest-label' });
+                    
+                    const div = document.createElement('div');
+                    div.className = "p-4 bg-white rounded-3xl border border-slate-100 shadow-sm mb-2 hover:border-blue-400 cursor-pointer transition-all active:scale-95";
+                    div.innerHTML = `
+                        <div class="flex justify-between items-start mb-1">
+                            <p class="text-[8px] font-black text-blue-600 uppercase tracking-tighter">${i===0?'🚀 PRIMARY':'🛡️ ALTERNATE'}</p>
+                            <span class="text-[9px] font-bold text-slate-400">${z.distance} KM</span>
+                        </div>
+                        <h4 class="text-xs font-bold text-slate-800 uppercase truncate mb-2">${z.name}</h4>
+                        <div class="flex items-center gap-2">
+                             <div class="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-emerald-400" style="width: 50%"></div>
+                             </div>
+                             <span class="text-[9px] font-black text-emerald-600 whitespace-nowrap tracking-tighter uppercase">${z.capacity} PAX</span>
+                        </div>`;
+                    div.onclick = () => { map.flyTo([z.lat, z.lon], 16); calculateNewRoute(z.lat, z.lon, z.name); };
+                    list.appendChild(div);
+                });
+            } else {
+                if (routeControl) map.removeControl(routeControl);
+                document.getElementById('routeBadge').classList.add('hidden');
+                list.innerHTML = `<p class="text-[10px] text-slate-400 italic mt-10 text-center uppercase tracking-widest">System Stable: No Evacuation Needed</p>`;
+            }
+            map.flyTo(currentUserLoc, 15);
+        }
+    </script>
+</body>
+</html>
